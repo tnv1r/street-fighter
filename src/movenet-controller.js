@@ -5,14 +5,43 @@ class MoveNetController {
     this.isRunning = false;
     this.keyStates = {};
     this.lastPose = null;
-    this.movementThreshold = 0.1;
-    this.confidenceThreshold = 0.5;
-    this.frameSkip = 3; // Process every 3rd frame for better performance
+    this.confidenceThreshold = 0.6; // Increased for better accuracy
+    this.frameSkip = 2; // Process every 2nd frame
     this.frameCount = 0;
+
+    // Cooldown system - reduced for better responsiveness
+    this.cooldowns = {
+      movement: 0,
+      punch: 0,
+      kick: 0,
+      hadouken: 0,
+    };
+
+    this.cooldownTimes = {
+      movement: 150, // Slightly longer for movement
+      punch: 800, // Increased cooldown to prevent spam detection
+      kick: 500,
+      hadouken: 3000,
+    };
+
+    // Baseline pose for relative movement detection
+    this.baselinePose = null;
+    this.baselineFrames = 0;
+    this.needsBaseline = true;
   }
 
   async init() {
-    console.log("🚀 Initializing MoveNet Controller...");
+    console.log("🚀 Initializing MoveNet Controller for Player 1...");
+    console.log("🎮 SIMPLIFIED MOVEMENT GUIDE:");
+    console.log("📍 BODY MOVEMENTS:");
+    console.log("   • Lean LEFT (shift body weight left)");
+    console.log("   • Lean RIGHT (shift body weight right)");
+    console.log("   • CROUCH (bend knees/lower body)");
+    console.log("   • JUMP (raise knees up)");
+    console.log("🥊 ATTACKS:");
+    console.log("   • PUNCH: Extend arm forward");
+    console.log("   • KICK: Raise knee high");
+    console.log("💡 TIP: Stand centered, then move deliberately!");
 
     try {
       // Setup overlay elements
@@ -36,7 +65,7 @@ class MoveNetController {
       const detectorConfig = {
         modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING,
         enableSmoothing: true,
-        minPoseScore: 0.25,
+        minPoseScore: 0.3,
       };
 
       this.detector = await poseDetection.createDetector(
@@ -75,24 +104,24 @@ class MoveNetController {
         },
       });
 
-      console.log("✅ Camera stream obtained:", stream);
+      console.log("✅ Camera stream obtained");
 
       this.video.srcObject = stream;
-
-      // Explicitly play the video and make it visible
       await this.video.play();
       this.video.style.display = "block";
 
-      console.log("📺 Video element setup complete");
-
       this.isRunning = true;
+      this.needsBaseline = true;
+      this.baselineFrames = 0;
       this.startButton.textContent = "Stop MoveNet";
 
-      // Start pose detection immediately
+      // Start pose detection
       this.detectPoses();
-      this.updateStatus("Body tracking active! Move to control the character.");
+      this.updateStatus(
+        "🎯 Stand centered and still for 2 seconds to calibrate..."
+      );
 
-      console.log("🎯 Pose detection started");
+      console.log("🎯 Pose detection started - calibrating baseline...");
     } catch (error) {
       console.error("❌ Error accessing camera:", error);
       this.updateStatus("Camera access denied. Please allow camera access.");
@@ -103,15 +132,13 @@ class MoveNetController {
     console.log("🛑 Stopping camera...");
 
     if (this.video.srcObject) {
-      this.video.srcObject.getTracks().forEach((track) => {
-        console.log("⏹️ Stopping track:", track.kind);
-        track.stop();
-      });
+      this.video.srcObject.getTracks().forEach((track) => track.stop());
       this.video.srcObject = null;
     }
 
     this.video.style.display = "none";
     this.isRunning = false;
+    this.needsBaseline = true;
     this.startButton.textContent = "Start MoveNet";
     this.updateStatus('Body tracking stopped. Click "Start MoveNet" to begin.');
 
@@ -125,22 +152,19 @@ class MoveNetController {
 
     this.frameCount++;
 
+    // Update cooldowns
+    this.updateCooldowns();
+
     // Skip frames for better performance
     if (this.frameCount % this.frameSkip === 0) {
       try {
         const poses = await this.detector.estimatePoses(this.video);
 
-        if (poses.length > 0) {
-          console.log(
-            `🎭 Pose detected! Score: ${poses[0].score.toFixed(
-              3
-            )}, Keypoints: ${poses[0].keypoints.length}`
-          );
-          this.processPose(poses[0]);
-        } else {
-          // Only log occasionally to avoid spam
-          if (this.frameCount % 30 === 0) {
-            console.log("👻 No poses detected in frame");
+        if (poses.length > 0 && poses[0].score > 0.3) {
+          if (this.needsBaseline) {
+            this.establishBaseline(poses[0]);
+          } else {
+            this.processPose(poses[0]);
           }
         }
       } catch (error) {
@@ -151,197 +175,202 @@ class MoveNetController {
     requestAnimationFrame(() => this.detectPoses());
   }
 
-  processPose(pose) {
-    if (pose.score < this.confidenceThreshold) {
-      console.log(
-        `🚫 Pose confidence too low: ${pose.score.toFixed(3)} < ${
-          this.confidenceThreshold
-        }`
-      );
-      return;
+  establishBaseline(pose) {
+    this.baselineFrames++;
+
+    if (this.baselineFrames === 1) {
+      this.baselinePose = pose;
+      console.log("📏 Starting baseline calibration...");
+    } else if (this.baselineFrames < 60) {
+      // 2 seconds at 30fps
+      // Average the baseline pose
+      const alpha = 0.1; // Smoothing factor
+      pose.keypoints.forEach((kp, i) => {
+        if (kp.score > this.confidenceThreshold) {
+          this.baselinePose.keypoints[i].x =
+            this.baselinePose.keypoints[i].x * (1 - alpha) + kp.x * alpha;
+          this.baselinePose.keypoints[i].y =
+            this.baselinePose.keypoints[i].y * (1 - alpha) + kp.y * alpha;
+        }
+      });
+    } else {
+      this.needsBaseline = false;
+      console.log("✅ Baseline established! Ready for movement detection");
+      this.updateStatus("🎮 Ready! Start moving to control Player 1");
     }
-
-    const keypoints = pose.keypoints;
-
-    // Get key body parts with confidence check
-    const getKeypoint = (name) => {
-      const point = keypoints.find((kp) => kp.name === name);
-      return point && point.score > this.confidenceThreshold ? point : null;
-    };
-
-    const leftWrist = getKeypoint("left_wrist");
-    const rightWrist = getKeypoint("right_wrist");
-    const leftShoulder = getKeypoint("left_shoulder");
-    const rightShoulder = getKeypoint("right_shoulder");
-    const leftHip = getKeypoint("left_hip");
-    const rightHip = getKeypoint("right_hip");
-    const leftKnee = getKeypoint("left_knee");
-    const rightKnee = getKeypoint("right_knee");
-    const nose = getKeypoint("nose");
-
-    // Log detected body parts
-    const detectedParts = {
-      leftWrist: !!leftWrist,
-      rightWrist: !!rightWrist,
-      leftShoulder: !!leftShoulder,
-      rightShoulder: !!rightShoulder,
-      leftHip: !!leftHip,
-      rightHip: !!rightHip,
-      leftKnee: !!leftKnee,
-      rightKnee: !!rightKnee,
-      nose: !!nose,
-    };
-
-    console.log("🦴 Body parts detected:", detectedParts);
-
-    this.checkMovements({
-      leftWrist,
-      rightWrist,
-      leftShoulder,
-      rightShoulder,
-      leftHip,
-      rightHip,
-      leftKnee,
-      rightKnee,
-      nose,
-    });
-
-    this.lastPose = pose;
   }
 
-  checkMovements(parts) {
-    // Reset all movement keys
-    this.releaseMovementKeys();
+  updateCooldowns() {
+    const now = Date.now();
+    Object.keys(this.cooldowns).forEach((key) => {
+      if (this.cooldowns[key] > 0 && now >= this.cooldowns[key]) {
+        this.cooldowns[key] = 0;
+      }
+    });
+  }
 
-    if (
-      !parts.leftShoulder ||
-      !parts.rightShoulder ||
-      !parts.leftHip ||
-      !parts.rightHip
-    ) {
-      console.log("⚠️ Missing core body parts for movement detection");
+  isOnCooldown(action) {
+    return this.cooldowns[action] > 0;
+  }
+
+  setCooldown(action) {
+    this.cooldowns[action] = Date.now() + this.cooldownTimes[action];
+  }
+
+  processPose(pose) {
+    if (!this.baselinePose || pose.score < 0.3) return;
+
+    const keypoints = pose.keypoints;
+    const baseKeypoints = this.baselinePose.keypoints;
+
+    // Get reliable keypoints
+    const getKeypoint = (name) => {
+      const point = keypoints.find((kp) => kp.name === name);
+      const basePt = baseKeypoints.find((kp) => kp.name === name);
+      return point && basePt && point.score > this.confidenceThreshold
+        ? { current: point, baseline: basePt }
+        : null;
+    };
+
+    const shoulders = {
+      left: getKeypoint("left_shoulder"),
+      right: getKeypoint("right_shoulder"),
+    };
+
+    const hips = {
+      left: getKeypoint("left_hip"),
+      right: getKeypoint("right_hip"),
+    };
+
+    const wrists = {
+      left: getKeypoint("left_wrist"),
+      right: getKeypoint("right_wrist"),
+    };
+
+    const knees = {
+      left: getKeypoint("left_knee"),
+      right: getKeypoint("right_knee"),
+    };
+
+    this.checkMovements(shoulders, hips, wrists, knees);
+  }
+
+  checkMovements(shoulders, hips, wrists, knees) {
+    // Release movement keys if not on cooldown
+    if (!this.isOnCooldown("movement")) {
+      this.releaseMovementKeys();
+    }
+
+    // Need at least shoulders and hips for body movement
+    if (!shoulders.left || !shoulders.right || !hips.left || !hips.right) {
       return;
     }
 
-    // Calculate body center and dimensions
-    const bodyCenter = {
-      x:
-        (parts.leftShoulder.x +
-          parts.rightShoulder.x +
-          parts.leftHip.x +
-          parts.rightHip.x) /
-        4,
-      y:
-        (parts.leftShoulder.y +
-          parts.rightShoulder.y +
-          parts.leftHip.y +
-          parts.rightHip.y) /
-        4,
-    };
+    // Calculate body center movement
+    const currentBodyX =
+      (shoulders.left.current.x +
+        shoulders.right.current.x +
+        hips.left.current.x +
+        hips.right.current.x) /
+      4;
+    const baselineBodyX =
+      (shoulders.left.baseline.x +
+        shoulders.right.baseline.x +
+        hips.left.baseline.x +
+        hips.right.baseline.x) /
+      4;
 
-    const shoulderWidth = Math.abs(
-      parts.rightShoulder.x - parts.leftShoulder.x
-    );
-    const bodyHeight = Math.abs(
-      (parts.leftShoulder.y + parts.rightShoulder.y) / 2 -
-        (parts.leftHip.y + parts.rightHip.y) / 2
-    );
+    const currentBodyY =
+      (shoulders.left.current.y +
+        shoulders.right.current.y +
+        hips.left.current.y +
+        hips.right.current.y) /
+      4;
+    const baselineBodyY =
+      (shoulders.left.baseline.y +
+        shoulders.right.baseline.y +
+        hips.left.baseline.y +
+        hips.right.baseline.y) /
+      4;
 
-    console.log("📐 Body measurements:", {
-      centerX: bodyCenter.x.toFixed(3),
-      centerY: bodyCenter.y.toFixed(3),
-      shoulderWidth: shoulderWidth.toFixed(3),
-      bodyHeight: bodyHeight.toFixed(3),
-    });
+    const bodyXDiff = currentBodyX - baselineBodyX;
+    const bodyYDiff = currentBodyY - baselineBodyY;
 
-    // Check for lean left/right (body movement)
-    if (bodyCenter.x < 0.4) {
-      console.log("⬅️ LEAN LEFT detected");
-      this.triggerKey("ArrowLeft", true);
-    } else if (bodyCenter.x > 0.6) {
-      console.log("➡️ LEAN RIGHT detected");
-      this.triggerKey("ArrowRight", true);
-    }
+    const moveThreshold = 0.08; // 8% of frame width/height
 
-    // Check for crouch (body lowered)
-    if (parts.nose && parts.nose.y > 0.6) {
-      console.log("⬇️ CROUCH detected");
-      this.triggerKey("ArrowDown", true);
-    }
-
-    // Check for jump (body raised or knees bent high)
-    if (parts.leftKnee && parts.rightKnee) {
-      const avgKneeY = (parts.leftKnee.y + parts.rightKnee.y) / 2;
-      const avgHipY = (parts.leftHip.y + parts.rightHip.y) / 2;
-
-      if (avgKneeY < avgHipY - bodyHeight * 0.2) {
-        console.log("⬆️ JUMP detected");
-        this.triggerKey("ArrowUp", true);
+    // Movement detection with cooldown
+    if (!this.isOnCooldown("movement")) {
+      if (bodyXDiff < -moveThreshold) {
+        console.log("⬅️ LEAN LEFT detected");
+        this.triggerKey("KeyA", true);
+        this.setCooldown("movement");
+      } else if (bodyXDiff > moveThreshold) {
+        console.log("➡️ LEAN RIGHT detected");
+        this.triggerKey("KeyD", true);
+        this.setCooldown("movement");
+      } else if (bodyYDiff > moveThreshold * 0.6) {
+        console.log("⬇️ CROUCH detected");
+        this.triggerKey("KeyS", true);
+        this.setCooldown("movement");
       }
-    }
 
-    // Check for punches (wrist position relative to shoulders)
-    if (parts.leftWrist && parts.leftShoulder) {
-      const leftPunchExtension = parts.leftWrist.x - parts.leftShoulder.x;
-      if (Math.abs(leftPunchExtension) > shoulderWidth * 0.5) {
-        if (parts.leftWrist.y < parts.leftShoulder.y - bodyHeight * 0.1) {
-          console.log("👊 LEFT HIGH PUNCH detected");
-          this.triggerKey("KeyR", false); // Heavy punch
-        } else if (
-          parts.leftWrist.y >
-          parts.leftShoulder.y + bodyHeight * 0.1
-        ) {
-          console.log("👊 LEFT LOW PUNCH detected");
-          this.triggerKey("KeyQ", false); // Light punch
-        } else {
-          console.log("👊 LEFT MID PUNCH detected");
-          this.triggerKey("KeyE", false); // Medium punch
+      // Jump detection (knees raised)
+      if (knees.left && knees.right) {
+        const leftKneeRaise = knees.left.baseline.y - knees.left.current.y;
+        const rightKneeRaise = knees.right.baseline.y - knees.right.current.y;
+
+        if (leftKneeRaise > 0.15 || rightKneeRaise > 0.15) {
+          console.log("⬆️ JUMP detected");
+          this.triggerKey("KeyW", true);
+          this.setCooldown("movement");
         }
       }
     }
 
-    if (parts.rightWrist && parts.rightShoulder) {
-      const rightPunchExtension = parts.rightShoulder.x - parts.rightWrist.x;
-      if (Math.abs(rightPunchExtension) > shoulderWidth * 0.5) {
-        if (parts.rightWrist.y < parts.rightShoulder.y - bodyHeight * 0.1) {
-          console.log("👊 RIGHT HIGH PUNCH detected");
-          this.triggerKey("KeyR", false); // Heavy punch
-        } else if (
-          parts.rightWrist.y >
-          parts.rightShoulder.y + bodyHeight * 0.1
-        ) {
-          console.log("👊 RIGHT LOW PUNCH detected");
-          this.triggerKey("KeyQ", false); // Light punch
-        } else {
-          console.log("👊 RIGHT MID PUNCH detected");
-          this.triggerKey("KeyE", false); // Medium punch
-        }
+    // Attack detection
+    this.checkAttacks(wrists, shoulders, knees, hips);
+  }
+
+  checkAttacks(wrists, shoulders, knees, hips) {
+    // Punch detection - increased threshold for more deliberate punches
+    if (!this.isOnCooldown("punch") && wrists.left && shoulders.left) {
+      const leftPunchExtension = wrists.left.current.x - wrists.left.baseline.x;
+      if (Math.abs(leftPunchExtension) > 0.18) {
+        // Increased threshold
+        console.log("👊 LEFT PUNCH detected - Light punch (Q)");
+        this.triggerKey("KeyQ", false); // Light punch for left hand
+        this.setCooldown("punch");
       }
     }
 
-    // Check for kicks (knee raised)
-    if (parts.leftKnee && parts.leftHip) {
-      const leftKneeRaise = parts.leftHip.y - parts.leftKnee.y;
-      if (leftKneeRaise > bodyHeight * 0.3) {
-        if (parts.leftKnee.x < parts.leftHip.x - shoulderWidth * 0.2) {
-          console.log("🦵 LEFT SIDE KICK detected");
-          this.triggerKey("KeyG", false); // Heavy kick
-        } else {
-          console.log("🦵 LEFT FRONT KICK detected");
-          this.triggerKey("KeyF", false); // Light kick
-        }
+    if (!this.isOnCooldown("punch") && wrists.right && shoulders.right) {
+      const rightPunchExtension =
+        wrists.right.baseline.x - wrists.right.current.x;
+      if (Math.abs(rightPunchExtension) > 0.18) {
+        // Increased threshold
+        console.log("👊 RIGHT PUNCH detected - Heavy punch (R)");
+        this.triggerKey("KeyR", false); // Heavy punch for right hand
+        this.setCooldown("punch");
       }
     }
 
-    if (parts.rightKnee && parts.rightHip) {
-      const rightKneeRaise = parts.rightHip.y - parts.rightKnee.y;
-      if (rightKneeRaise > bodyHeight * 0.3) {
-        if (parts.rightKnee.x > parts.rightHip.x + shoulderWidth * 0.2) {
-          console.log("🦵 RIGHT SIDE KICK detected");
-          this.triggerKey("KeyG", false); // Heavy kick
-        } else {
-          console.log("🦵 RIGHT FRONT KICK detected");
-          this.triggerKey("KeyV", false); // Medium kick
+    // Kick detection (simplified)
+    if (!this.isOnCooldown("kick")) {
+      if (knees.left && hips.left) {
+        const leftKneeRaise = knees.left.baseline.y - knees.left.current.y;
+        if (leftKneeRaise > 0.2) {
+          console.log("🦵 LEFT KICK detected");
+          this.triggerKey("KeyF", false);
+          this.setCooldown("kick");
+        }
+      }
+
+      if (knees.right && hips.right) {
+        const rightKneeRaise = knees.right.baseline.y - knees.right.current.y;
+        if (rightKneeRaise > 0.2) {
+          console.log("🦵 RIGHT KICK detected");
+          this.triggerKey("KeyG", false);
+          this.setCooldown("kick");
         }
       }
     }
@@ -353,21 +382,20 @@ class MoveNetController {
       if (!this.keyStates[keyCode]) {
         this.keyStates[keyCode] = true;
         this.dispatchKeyEvent("keydown", keyCode);
-        console.log(`🔥 MOVEMENT KEY PRESSED: ${keyCode}`);
+        console.log(`🔥 MOVEMENT: ${keyCode}`);
       }
     } else {
       // For attack keys, trigger short press
       if (!this.keyStates[keyCode]) {
         this.keyStates[keyCode] = true;
         this.dispatchKeyEvent("keydown", keyCode);
-        console.log(`⚡ ATTACK KEY PRESSED: ${keyCode}`);
+        console.log(`⚡ ATTACK: ${keyCode}`);
 
         // Release after short delay
         setTimeout(() => {
           if (this.keyStates[keyCode]) {
             this.keyStates[keyCode] = false;
             this.dispatchKeyEvent("keyup", keyCode);
-            console.log(`🔓 ATTACK KEY RELEASED: ${keyCode}`);
           }
         }, 100);
       }
@@ -375,12 +403,11 @@ class MoveNetController {
   }
 
   releaseMovementKeys() {
-    const movementKeys = ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"];
+    const movementKeys = ["KeyA", "KeyD", "KeyW", "KeyS"];
     movementKeys.forEach((key) => {
       if (this.keyStates[key]) {
         this.keyStates[key] = false;
         this.dispatchKeyEvent("keyup", key);
-        console.log(`🔓 MOVEMENT KEY RELEASED: ${key}`);
       }
     });
   }
@@ -390,7 +417,6 @@ class MoveNetController {
       if (this.keyStates[key]) {
         this.keyStates[key] = false;
         this.dispatchKeyEvent("keyup", key);
-        console.log(`🔓 ALL KEYS RELEASED: ${key}`);
       }
     });
   }
@@ -401,16 +427,27 @@ class MoveNetController {
       key: this.getKeyFromCode(code),
       bubbles: true,
       cancelable: true,
+      // Ensure it targets Player 1 specifically
+      which: this.getWhichCode(code),
+      keyCode: this.getWhichCode(code),
     });
+
+    // Dispatch to document for Player 1 controls
     document.dispatchEvent(event);
+
+    // Also try dispatching to the game canvas if it exists
+    const canvas = document.querySelector("canvas");
+    if (canvas) {
+      canvas.dispatchEvent(event);
+    }
   }
 
   getKeyFromCode(code) {
     const keyMap = {
-      ArrowLeft: "ArrowLeft",
-      ArrowRight: "ArrowRight",
-      ArrowUp: "ArrowUp",
-      ArrowDown: "ArrowDown",
+      KeyA: "a",
+      KeyD: "d",
+      KeyW: "w",
+      KeyS: "s",
       KeyQ: "q",
       KeyE: "e",
       KeyR: "r",
@@ -421,11 +458,27 @@ class MoveNetController {
     return keyMap[code] || code;
   }
 
+  getWhichCode(code) {
+    const whichMap = {
+      KeyA: 65,
+      KeyD: 68,
+      KeyW: 87,
+      KeyS: 83,
+      KeyQ: 81,
+      KeyE: 69,
+      KeyR: 82,
+      KeyF: 70,
+      KeyV: 86,
+      KeyG: 71,
+    };
+    return whichMap[code] || 0;
+  }
+
   updateStatus(message) {
     if (this.statusElement) {
       this.statusElement.textContent = message;
     }
-    console.log("📋 Status update:", message);
+    console.log("📋", message);
   }
 }
 
