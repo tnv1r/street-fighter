@@ -1,93 +1,151 @@
 <!DOCTYPE html>
 <html lang="en">
-	<head>
-		<link rel="icon" href="./public/images/vsLogo.png" />
-		<meta charset="UTF-8" />
-		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-		<title>Street Fighter by Mayank Jain</title>
-		<link rel="stylesheet" href="src/style.css" />
-		<script type="module" src="src/index.js"></script>
-	</head>
+  <head>
+    <link rel="icon" href="./public/images/vsLogo.png" />
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Street Fighter by Mayank Jain</title>
+    <link rel="stylesheet" href="src/style.css" />
+    <!-- TensorFlow.js and MoveNet -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection@latest"></script>
+    <script type="module" src="src/index.js"></script>
+    <script type="module" src="src/movenet-controller.js"></script>
+  </head>
 
-	<body>
-		<main>
-			<canvas width="382px" height="224px"></canvas>
-		</main>
-		<audio
-			id="kensTheme"
-			src="./public/sounds/kens-theme.ogg"
-			preload="auto"
-			loop
-		></audio>
-		<audio
-			id="sound-fighter-land"
-			src="./public/sounds/land.ogg"
-			preload="auto"
-		></audio>
-		<audio
-			id="sound-fighter-light-kick-hit"
-			src="./public/sounds/light-kick-hit.ogg"
-			preload="auto"
-		></audio>
-		<audio
-			id="sound-fighter-medium-kick-hit"
-			src="./public/sounds/medium-kick-hit.ogg"
-			preload="auto"
-		></audio>
-		<audio
-			id="sound-fighter-heavy-kick-hit"
-			src="./public/sounds/heavy-kick-hit.ogg"
-			preload="auto"
-		></audio>
-		<audio
-			id="sound-fighter-light-attack"
-			src="./public/sounds/light-attack.ogg"
-			preload="auto"
-		></audio>
-		<audio
-			id="sound-fighter-medium-attack"
-			src="./public/sounds/medium-attack.ogg"
-			preload="auto"
-		></audio>
-		<audio
-			id="sound-fighter-heavy-attack"
-			src="./public/sounds/heavy-attack.ogg"
-			preload="auto"
-		></audio>
-		<audio
-			id="sound-fighter-light-punch-hit"
-			src="./public/sounds/light-punch-hit.ogg"
-			preload="auto"
-		></audio>
-		<audio
-			id="sound-fighter-medium-punch-hit"
-			src="./public/sounds/medium-punch-hit.ogg"
-			preload="auto"
-		></audio>
-		<audio
-			id="sound-fighter-heavy-punch-hit"
-			src="./public/sounds/heavy-punch-hit.ogg"
-			preload="auto"
-		></audio>
-		<audio
-			id="sound-ken-hadouken"
-			src="./public/sounds/hadouken.ogg"
-			preload="auto"
-		></audio>
-		<audio
-			id="sound-ryu-hadouken"
-			src="./public/sounds/hadouken.ogg"
-			preload="auto"
-		></audio>
+  <body>
+    <main>
+      <canvas width="382px" height="224px"></canvas>
+    </main>
 
-		<img id="KenStage" src="public/images/kenstage.png" alt="kenstage" />
-		<img id="hud" src="public/images/hud.png" alt="HUD" />
-		<img id="KenImage" src="./public/images/ken.png" />
-		<img id="RyuImage" src="public/images/Ryu.png" />
-		<img id="ShadowImage" src="./public/images/shadow.png" />
-		<img id="Decals" src="./public/images/decals.png" />
-		<img id="Controls" src="./public/images/Controls.png" />
-		<img id="Logo" src="./public/images/logo.png" />
-		<img id="Winner" src="./public/images/winnerText.png" />
-	</body>
+    <!-- MoveNet Camera Overlay -->
+    <div
+      id="movenet-overlay"
+      style="
+        position: absolute;
+        bottom: 20px;
+        left: 20px;
+        width: 200px;
+        height: 200px;
+        background: rgba(0, 0, 0, 0.8);
+        border: 2px solid #fff;
+        border-radius: 10px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        z-index: 1000;
+      "
+    >
+      <video
+        id="movenet-video"
+        width="180"
+        height="135"
+        style="border-radius: 5px; display: none"
+      ></video>
+      <button
+        id="start-movenet-btn"
+        style="
+          background: #ff4444;
+          color: white;
+          border: none;
+          padding: 10px 20px;
+          border-radius: 5px;
+          cursor: pointer;
+          font-weight: bold;
+          margin-top: 10px;
+        "
+      >
+        Start MoveNet
+      </button>
+      <div
+        id="movenet-status"
+        style="
+          color: white;
+          font-size: 12px;
+          margin-top: 5px;
+          text-align: center;
+        "
+      >
+        Click to start body tracking
+      </div>
+    </div>
+
+    <audio
+      id="kensTheme"
+      src="./public/sounds/kens-theme.ogg"
+      preload="auto"
+      loop
+    ></audio>
+    <audio
+      id="sound-fighter-land"
+      src="./public/sounds/land.ogg"
+      preload="auto"
+    ></audio>
+    <audio
+      id="sound-fighter-light-kick-hit"
+      src="./public/sounds/light-kick-hit.ogg"
+      preload="auto"
+    ></audio>
+    <audio
+      id="sound-fighter-medium-kick-hit"
+      src="./public/sounds/medium-kick-hit.ogg"
+      preload="auto"
+    ></audio>
+    <audio
+      id="sound-fighter-heavy-kick-hit"
+      src="./public/sounds/heavy-kick-hit.ogg"
+      preload="auto"
+    ></audio>
+    <audio
+      id="sound-fighter-light-attack"
+      src="./public/sounds/light-attack.ogg"
+      preload="auto"
+    ></audio>
+    <audio
+      id="sound-fighter-medium-attack"
+      src="./public/sounds/medium-attack.ogg"
+      preload="auto"
+    ></audio>
+    <audio
+      id="sound-fighter-heavy-attack"
+      src="./public/sounds/heavy-attack.ogg"
+      preload="auto"
+    ></audio>
+    <audio
+      id="sound-fighter-light-punch-hit"
+      src="./public/sounds/light-punch-hit.ogg"
+      preload="auto"
+    ></audio>
+    <audio
+      id="sound-fighter-medium-punch-hit"
+      src="./public/sounds/medium-punch-hit.ogg"
+      preload="auto"
+    ></audio>
+    <audio
+      id="sound-fighter-heavy-punch-hit"
+      src="./public/sounds/heavy-punch-hit.ogg"
+      preload="auto"
+    ></audio>
+    <audio
+      id="sound-ken-hadouken"
+      src="./public/sounds/hadouken.ogg"
+      preload="auto"
+    ></audio>
+    <audio
+      id="sound-ryu-hadouken"
+      src="./public/sounds/hadouken.ogg"
+      preload="auto"
+    ></audio>
+
+    <img id="KenStage" src="public/images/kenstage.png" alt="kenstage" />
+    <img id="hud" src="public/images/hud.png" alt="HUD" />
+    <img id="KenImage" src="./public/images/ken.png" />
+    <img id="RyuImage" src="public/images/Ryu.png" />
+    <img id="ShadowImage" src="./public/images/shadow.png" />
+    <img id="Decals" src="./public/images/decals.png" />
+    <img id="Controls" src="./public/images/Controls.png" />
+    <img id="Logo" src="./public/images/logo.png" />
+    <img id="Winner" src="./public/images/winnerText.png" />
+  </body>
 </html>
